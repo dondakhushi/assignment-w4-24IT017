@@ -1,128 +1,140 @@
 const express = require('express');
-const app = express();
-const PORT = 5001;
+const mongoose = require('mongoose');
+require('dotenv').config();
 
-// Middleware to parse JSON requests
+const Task = require('./models/Task');
+
+const app = express();
+
 app.use(express.json());
 
-// In-memory database
-let tasks = [
-    {
-        id: 1,
-        title: "Learn Express",
-        completed: false
-    }
-];
-
-// Logging Middleware
-app.use((req, res, next) => {
-    console.log(`${req.method} ${req.url} - ${new
-        Date().toISOString()}`);
-    next();
-});
-
-// Content-Type Middleware
-app.use((req, res, next) => {
-
-    if (
-        (req.method === "POST" || req.method === "PUT") &&
-        !req.is("application/json")
-    ) {
-        return res.status(400).json({
-            message: "Content-Type must be application/json"
-        });
-    }
-
-    next();
-});
-
-// Route Middleware
-function validateId(req, res, next) {
-    const id = Number(req.params.id);
-    if (isNaN(id)) {
-        return res.status(400).json({
-            message: "Invalid Task ID"
-        });
-    }
-    next();
-}
-
-//Get All Tasks And Create Task
-app.route('/tasks')
-    .get((req, res) => {
-        res.status(200).json(tasks);
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => {
+        console.log('MongoDB connected');
     })
-    .post((req, res) => {
-        const { title, completed } = req.body;
-
-        const newTask = {
-
-            id: tasks.length + 1,
-            title,
-            completed: completed || false
-        };
-        tasks.push(newTask);
-        res.status(201).json({
-            message: "Task Created",
-            task: newTask
-        });
+    .catch((err) => {
+        console.error('MongoDB connection error:', err);
     });
 
-//Update Task And delete Task
-app.route('/tasks/:id')
-    .put(validateId, (req, res) => {
-        const id = Number(req.params.id);
-        const { title, completed } = req.body;
 
-        const taskIndex = tasks.findIndex(t => t.id === id);
-        if (taskIndex === -1) {
+// CREATE TASK
+app.post('/tasks', async (req, res, next) => {
+    try {
+        const task = await Task.create(req.body);
+
+        res.status(201).json(task);
+    } catch (err) {
+        next(err);
+    }
+});
+
+
+// GET ALL TASKS
+app.get('/tasks', async (req, res, next) => {
+    try {
+        const tasks = await Task.find();
+
+        res.json(tasks);
+    } catch (err) {
+        next(err);
+    }
+});
+
+
+// GET TASK BY ID
+app.get('/tasks/:id', async (req, res, next) => {
+    try {
+        const task = await Task.findById(req.params.id);
+
+        if (!task) {
             return res.status(404).json({
-                message: "Task not found"
+                message: 'Task not found'
             });
         }
 
-        tasks[taskIndex] = {
-            id,
-            title: title || tasks[taskIndex].title,
-            completed: completed !== undefined ? completed : tasks[taskIndex].completed
-        };
+        res.json(task);
+    } catch (err) {
+        next(err);
+    }
+});
 
-        res.status(200).json({
-            message: "Task Updated",
-            task: tasks[taskIndex]
-        });
-    })
-    .delete(validateId, (req, res) => {
 
-        const id = Number(req.params.id);
-        const index = tasks.findIndex(t => t.id === id);
-        if (index === -1) {
+// UPDATE TASK
+app.put('/tasks/:id', async (req, res, next) => {
+    try {
+        const task = await Task.findByIdAndUpdate(
+            req.params.id,
+            req.body,
+            {
+                new: true,
+                runValidators: true
+            }
+        );
+
+        if (!task) {
             return res.status(404).json({
-                message: "Task not found"
+                message: 'Task not found'
             });
         }
 
-        tasks.splice(index, 1);
-
-        res.status(200).json({
-            message: "Task Deleted"
-        });
-
-    });
-
-// 404 Middleware
-app.use((req, res, next) => {
-
-    res.status(404).json({
-        error: "Route Not Found"
-    });
+        res.json(task);
+    } catch (err) {
+        next(err);
+    }
 });
 
-// Global Error Handler
+
+// DELETE TASK
+app.delete('/tasks/:id', async (req, res, next) => {
+    try {
+        const task = await Task.findByIdAndDelete(req.params.id);
+
+        if (!task) {
+            return res.status(404).json({
+                message: 'Task not found'
+            });
+        }
+
+        res.json({
+            message: 'Task deleted successfully'
+        });
+    } catch (err) {
+        next(err);
+    }
+});
+
+
+// GLOBAL ERROR HANDLER
 app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ error: 'Something went wrong' });
+    if (err.name === 'ValidationError') {
+        const errors = {};
+
+        for (const field in err.errors) {
+            errors[field] = err.errors[field].message;
+        }
+
+        return res.status(400).json({
+            message: 'Validation failed',
+            errors: errors
+        });
+    }
+
+    if (err.name === 'CastError') {
+        return res.status(400).json({
+            message: 'Invalid ID format'
+        });
+    }
+
+    console.error(err);
+
+    res.status(500).json({
+        message: 'Internal server error'
+    });
 });
 
-// Start the server
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
